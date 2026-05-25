@@ -1,0 +1,362 @@
+You’re basically asking: “How do I get raw signals from the world into my clean QoS schema, reliably and repeatably?”  
+Let’s design this as a modular, schema‑driven pipeline that you can plug straight into your existing ecosystem.
+
+---
+
+Overview of the qos ingestion pipeline
+
+Goal: Continuously ingest heterogeneous signals (telemetry, synthetic tests, user reports), normalize them, aggregate into QoS Telemetry Snapshots and feed the QoS Map Generator and comparison engine.
+
+Core stages:
+
+1. Ingest raw events  
+2. Normalize & validate into canonical event types  
+3. Enrich & correlate with provider and region context  
+4. Aggregate into time windows  
+5. Compute metrics + confidence + anomalies + trend  
+6. Persist QoS snapshots and publish downstream events  
+
+---
+
+Canonical data model for ingestion
+
+Raw event types (pre‑normalized)
+
+- TelemetryEvent
+  - Fields: providerExternalId, timestamp, lat, lon, latencyMs, throughputMbps, success, errorCode, deviceType, networkType, etc.
+- SyntheticTestEvent
+  - Fields: testId, providerExternalId, timestamp, lat, lon, latencyMs, throughputMbps, status, scenarioId.
+- UserReportEvent
+  - Fields: userId (or hashed), timestamp, lat, lon, providerName, issueType, severity, freeText.
+
+Normalized event types (post‑ingest)
+
+- NormalizedTelemetry
+  - providerId (internal), timestamp, location, latencyMs, throughputMbps, success, errorType.
+- NormalizedSyntheticTest
+  - providerId, timestamp, location, latencyMs, throughputMbps, status, scenarioId.
+- NormalizedUserReport
+  - providerId, timestamp, location, issueType, severity, sentimentScore.
+
+These are the only event types the rest of the pipeline cares about.
+
+---
+
+Pipeline stages and modules
+
+1. Ingestion layer
+
+Responsibilities:
+
+- Accept data from:
+  - Streaming (Kafka, Kinesis, Pub/Sub)  
+  - Batch (files, S3, GCS, etc.)  
+  - APIs (webhooks, partner feeds)
+- Tag each record with:
+  - ingestionSource, ingestedAt, rawSchemaVersion.
+
+Modules:
+
+- TelemetryIngestor
+- SyntheticTestIngestor
+- UserReportIngestor
+
+Each ingestor writes to a raw topic/queue:
+
+- raw.telemetry
+- raw.synthetic
+- raw.user_reports
+
+---
+
+2. Normalization & validation
+
+Responsibilities:
+
+- Map external provider IDs → internal providerId (via provider directory).  
+- Normalize timestamps to UTC.  
+- Normalize units (ms, Mbps, etc.).  
+- Validate against NormalizedEvent Schemas.  
+- Drop or quarantine invalid records.
+
+Modules:
+
+- ProviderResolver
+  - Input: external provider identifiers, names.  
+  - Output: canonical providerId or “unknown”.
+- Normalizer
+  - One per raw stream: TelemetryNormalizer, SyntheticNormalizer, UserReportNormalizer.
+- SchemaValidator
+  - Validates normalized events against JSON Schemas.
+
+Outputs:
+
+- norm.telemetry
+- norm.synthetic
+- norm.user_reports
+- dead_letter (for invalid/unresolvable events)
+
+---
+
+3. Enrichment & correlation
+
+Responsibilities:
+
+- Attach provider metadata:
+  - Service categories, regions, capabilities.
+- Attach geo context:
+  - Region ID, city, state, country, grid cell ID (if pre‑grid).
+- Attach device/network context (optional):
+  - Device class, network type, etc.
+
+Modules:
+
+- GeoEnricher
+  - Maps (lat, lon) → region, grid cell (or defers grid to map generator).
+- ProviderMetadataEnricher
+  - Fetches provider record snapshot (or cached) for context.
+
+Outputs:
+
+- enriched.telemetry
+- enriched.synthetic
+- enriched.user_reports
+
+---
+
+4. Windowed aggregation (time‑series core)
+
+This is where you move from events → QoS metrics per provider per window.
+
+Window model:
+
+- For each providerId and interval:
+  - instantaneous (e.g., last 5 minutes)
+  - 1h, 24h, 7d, 30d, 90d
+
+Aggregation keys:
+
+- providerId
+- interval
+- Optional: regionId or serviceCategory if you want scoped QoS.
+
+Metrics computed (per provider, per interval):
+
+- From telemetry + synthetic:
+  - availability  
+  - latencyP95, latencyP50  
+  - throughputMedian, throughputP95  
+  - errorRate  
+  - slaCompliance (if SLA rules exist)
+- From user reports:
+  - userIssueRate (reports per unit time)  
+  - userSentiment (aggregated sentiment)
+
+Modules:
+
+- WindowAssigner
+  - Assigns each event to one or more time windows.
+- MetricAccumulator
+  - Maintains running aggregates (counts, sums, quantile sketches).
+- WindowCloser
+  - Emits final aggregates when window closes.
+
+Output:
+
+- agg.qos_metrics (intermediate, not yet QoS schema)
+
+---
+
+5. QoS snapshot builder
+
+This is where you transform aggregated metrics into QoS Telemetry Snapshots that match your schema.
+
+Responsibilities:
+
+- For each (providerId, interval, windowEnd):
+  - Build metrics object.  
+  - Compute confidence.  
+  - Detect anomalies.  
+  - Compute trend.  
+  - Attach source flags.
+
+Modules:
+
+- MetricComposer
+  - Maps aggregated stats → schema metrics:
+    - availability, latencyP95, latencyP50, throughputMedian, throughputP95, errorRate, slaCompliance.
+- ConfidenceEngine
+  - Inputs:
+    - Sample counts (telemetry, synthetic, user reports)  
+    - Source diversity  
+    - Variance / stability  
+    - Recency
+  - Output: confidence ∈ [0,1].
+- AnomalyDetector
+  - Rule‑based + optional statistical:
+    - Outage, degradation, instability, packetloss, latencyspike, throughput_drop.
+- TrendAnalyzer
+  - Compares current window vs previous N windows:
+    - improving, degrading, stable.
+
+Output:
+
+A stream or batch of QoS Telemetry Snapshots:
+
+`json
+{
+  "qosId": "qos-prov-att-30d-2026-05-25T00:00:00Z",
+  "providerId": "prov-att-001",
+  "timestamp": "2026-05-25T00:00:00Z",
+  "interval": "30d",
+  "metrics": {
+    "availability": 0.995,
+    "latencyP95": 52,
+    "latencyP50": 28,
+    "throughputMedian": 210,
+    "throughputP95": 380,
+    "errorRate": 0.004,
+    "slaCompliance": 0.982
+  },
+  "confidence": 0.91,
+  "anomalies": [
+    {
+      "type": "latency_spike",
+      "severity": "medium",
+      "notes": "Two spikes detected in last 7 days."
+    }
+  ],
+  "trend": "stable",
+  "source": {
+    "telemetry": true,
+    "syntheticTests": true,
+    "userReports": true
+  }
+}
+`
+
+---
+
+6. Persistence and publication
+
+Responsibilities:
+
+- Persist QoS snapshots to a QoSStore (DB, time‑series store, or object store).  
+- Publish events for downstream consumers:
+  - QoS Map Generator  
+  - Provider Comparison Engine  
+  - Dashboards / UIs  
+  - Alerting / playbooks
+
+Modules:
+
+- QoSStoreWriter
+  - Writes snapshots keyed by (providerId, interval, timestamp).
+- EventPublisher
+  - Publishes qos.snapshot.created events with references:
+    - qosId, providerId, interval, timestamp.
+
+---
+
+Integration points with your existing components
+
+Provider directory
+
+- ProviderResolver uses the provider directory to map external IDs → providerId.  
+- QoS snapshots are referenced in the provider’s qosProfile:
+  - latestInstantaneous  
+  - latestLongTerm
+
+You can run a ProfileUpdater job that, after each snapshot, updates the provider record’s QoS pointers and summary.
+
+QoS map generator
+
+- Consumes QoS snapshots and enriched events:
+  - For long‑term maps, use interval = 30d or 90d.  
+  - For instantaneous maps, use interval = instantaneous plus recent events.
+- The ingestion pipeline ensures:
+  - Metrics are consistent.  
+  - Confidence and anomalies are already computed.
+
+Comparison engine
+
+- Reads QoS snapshots directly:
+  - For a given scenario, it selects the appropriate interval (e.g., 30d).  
+  - Uses metrics + confidence + anomalies + trend as inputs to scoring.
+
+---
+
+Operational considerations
+
+Idempotency
+
+- QoS snapshots should be idempotent per (providerId, interval, windowEnd).  
+- Use deterministic qosId:
+  - e.g., qos-{providerId}-{interval}-{windowEndISO}.
+
+Late data
+
+- Decide policy:
+  - Recompute window when late data arrives (and overwrite snapshot), or  
+  - Ignore late data beyond a lateness threshold.
+- If recomputing, emit:
+  - qos.snapshot.updated events.
+
+Backfill
+
+- For historical analysis, run the pipeline in batch mode over historical raw events.  
+- Same code, different execution mode.
+
+Monitoring
+
+Track:
+
+- Ingestion rates per source.  
+- Normalization error rates.  
+- Dead‑letter volume.  
+- Snapshot counts per provider/interval.  
+- Confidence distributions (to detect data gaps).
+
+---
+
+Minimal interface sketch (TypeScript‑style)
+
+`ts
+interface QoSSnapshot {
+  qosId: string;
+  providerId: string;
+  timestamp: string;
+  interval: "instantaneous" | "1h" | "24h" | "7d" | "30d" | "90d";
+  metrics: {
+    availability: number;
+    latencyP95: number;
+    latencyP50: number;
+    throughputMedian: number;
+    throughputP95: number;
+    errorRate: number;
+    slaCompliance: number;
+  };
+  confidence: number;
+  anomalies: {
+    type:
+      | "outage"
+      | "degradation"
+      | "instability"
+      | "packet_loss"
+      | "latency_spike"
+      | "throughput_drop";
+    severity: "low" | "medium" | "high" | "critical";
+    notes?: string;
+  }[];
+  trend?: "improving" | "degrading" | "stable";
+  source: {
+    telemetry: boolean;
+    syntheticTests: boolean;
+    userReports: boolean;
+  };
+}
+`
+
+---
+
+If you tell me your preferred stack (Kafka vs Kinesis, TS vs Python), I can turn this into a concrete implementation skeleton—topics, jobs, and function signatures wired end‑to‑end.
