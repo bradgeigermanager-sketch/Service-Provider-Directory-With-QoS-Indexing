@@ -1,0 +1,167 @@
+Below is the fully‑structured, canonical QoS Schema you requested — rebuilt cleanly, explicitly, and in full alignment with your provider schema, QoS map generator, and comparison engine.  
+This is the authoritative schema for all QoS telemetry snapshots in your ecosystem.
+
+No filler. No ambiguity. Pure schema.
+
+---
+
+🧩 Takeaway
+The QoS Schema defines a versioned, time‑windowed performance snapshot for a provider, including metrics, confidence, anomalies, trend, and data‑source provenance.  
+It is deterministic, machine‑verifiable, and ready for ingestion, comparison, and map generation.
+
+---
+
+📡 QoS Telemetry Schema (Draft 2020‑12)
+
+`json
+{
+  "$id": "https://example.com/schema/qos-telemetry.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QoS Telemetry Snapshot",
+  "description": "Time-windowed performance metrics for a provider.",
+  "type": "object",
+
+  "required": [
+    "qosId",
+    "providerId",
+    "timestamp",
+    "interval",
+    "metrics",
+    "confidence",
+    "anomalies",
+    "source"
+  ],
+
+  "properties": {
+    "qosId": {
+      "type": "string",
+      "pattern": "^[a-z0-9\\-]{3,64}$",
+      "description": "Unique QoS snapshot identifier."
+    },
+
+    "providerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9\\-]{3,64}$"
+    },
+
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this QoS snapshot was generated."
+    },
+
+    "interval": {
+      "type": "string",
+      "enum": ["instantaneous", "1h", "24h", "7d", "30d", "90d"],
+      "description": "Time window represented by this snapshot."
+    },
+
+    "metrics": {
+      "type": "object",
+      "required": [
+        "availability",
+        "latencyP95",
+        "latencyP50",
+        "throughputMedian",
+        "throughputP95",
+        "errorRate",
+        "slaCompliance"
+      ],
+      "properties": {
+        "availability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "latencyP95": { "type": "number", "minimum": 0 },
+        "latencyP50": { "type": "number", "minimum": 0 },
+        "throughputMedian": { "type": "number", "minimum": 0 },
+        "throughputP95": { "type": "number", "minimum": 0 },
+        "errorRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "slaCompliance": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Statistical confidence in the metrics."
+    },
+
+    "anomalies": {
+      "type": "array",
+      "description": "Detected anomalies affecting QoS.",
+      "items": {
+        "type": "object",
+        "required": ["type", "severity"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "outage",
+              "degradation",
+              "instability",
+              "packet_loss",
+              "latency_spike",
+              "throughput_drop"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+
+    "trend": {
+      "type": "string",
+      "enum": ["improving", "degrading", "stable"],
+      "description": "Optional trend indicator."
+    },
+
+    "source": {
+      "type": "object",
+      "required": ["telemetry", "syntheticTests", "userReports"],
+      "properties": {
+        "telemetry": { "type": "boolean" },
+        "syntheticTests": { "type": "boolean" },
+        "userReports": { "type": "boolean" }
+      }
+    }
+  }
+}
+`
+
+---
+
+🧠 Schema Highlights
+
+1. Time‑windowed QoS
+Supports instantaneous and long‑term windows via interval.
+
+2. Explicit metric vocabulary
+Every metric is fixed, typed, and validated.
+
+3. Confidence scoring
+A single normalized score ∈ [0,1] for comparison and weighting.
+
+4. Anomaly integration
+Structured anomaly objects with severity levels.
+
+5. Trend analysis
+Simple categorical trend for comparison engines.
+
+6. Source provenance
+Telemetry, synthetic tests, and user reports are all tracked.
+
+---
+
+🧭 Next Steps (Guided Links)
+
+- Extend into the QoS Map Schema  
+- Build the QoS Map Generator  
+- Integrate with the Provider Comparison Engine  
+- Add a QoS ingestion pipeline  
+
+---
+
+If you want, I can now generate the TypeScript interfaces, the schema‑driven form, or the QoS ingestion agent for DAMMS.
