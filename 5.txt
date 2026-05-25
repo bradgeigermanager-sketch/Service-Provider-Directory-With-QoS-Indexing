@@ -1,0 +1,289 @@
+Below is the complete, production‑grade design for your QoS Map Generator — the engine that ingests telemetry, geospatial data, and provider metadata, then produces versioned, deterministic QoS Maps compatible with your provider schema, comparison engine, and DAMMS‑style pattern ecosystem.
+
+I’m giving you the architecture, data flow, algorithm, module design, and output contract — all structured, explicit, and ready to implement.
+
+---
+
+🧩 Takeaway
+The QoS Map Generator is a pipeline engine that:
+
+1. Defines a grid (square, hex, or geohash) at a chosen resolution  
+2. Collects telemetry, synthetic tests, and user reports  
+3. Aggregates metrics into cells  
+4. Computes confidence, anomaly flags, and trend  
+5. Outputs a versioned QoS Map compatible with your schema  
+
+It is deterministic, reproducible, and fully schema‑driven.
+
+---
+
+🗺️ 1. High‑Level Architecture
+
+Core modules (each is a component):
+
+- GridBuilder  
+- DataCollector  
+- MetricAggregator  
+- ConfidenceEngine  
+- AnomalyDetector  
+- TrendAnalyzer  
+- MapAssembler  
+- MapVersioner  
+
+Each module is deterministic and stateless; the pipeline orchestrator provides context.
+
+---
+
+🧭 2. Input Contract
+
+QoS Map Generation Request
+
+`json
+{
+  "providerId": "prov-att-001",
+  "timestamp": "2026-05-25T11:00:00Z",
+  "gridSystem": "hex",
+  "resolution": "250m",
+  "region": {
+    "type": "polygon",
+    "coordinates": [...]
+  },
+  "timeWindow": {
+    "mode": "long_term",
+    "interval": "30d",
+    "end": "2026-05-25T11:00:00Z"
+  },
+  "dataSources": {
+    "telemetry": true,
+    "syntheticTests": true,
+    "userReports": true
+  }
+}
+`
+
+This is the canonical input for the generator.
+
+---
+
+🧱 3. Pipeline Overview
+
+Step 1 — GridBuilder
+Creates deterministic geospatial cells.
+
+- Input: region polygon + grid system + resolution  
+- Output: array of { cellId, lat, lon, bounds }
+
+Step 2 — DataCollector
+Collects all raw data intersecting each cell:
+
+- Telemetry samples  
+- Synthetic test results  
+- User reports  
+- Historical QoS snapshots (for trend)
+
+Step 3 — MetricAggregator
+For each cell:
+
+- Compute availability  
+- Compute latency P95  
+- Compute throughput median  
+- Compute error rate  
+- Compute SLA compliance (if applicable)
+
+Step 4 — ConfidenceEngine
+Computes confidence score per cell:
+
+- Sample count  
+- Source diversity  
+- Variance  
+- Recency  
+- Historical stability  
+
+Step 5 — AnomalyDetector
+Flags cells with:
+
+- Outage  
+- Degraded performance  
+- High latency  
+- Low throughput  
+- Instability  
+
+Step 6 — TrendAnalyzer
+Compares current metrics to historical windows:
+
+- Improving  
+- Degrading  
+- Stable  
+
+Step 7 — MapAssembler
+Builds the final QoS Map object.
+
+Step 8 — MapVersioner
+Assigns semantic version:
+
+- Patch: new data  
+- Minor: new metrics  
+- Major: schema change  
+
+---
+
+🧮 4. Algorithms (Concise + Deterministic)
+
+4.1 Grid Generation
+
+Square grid
+`
+cellWidth = resolutionMeters
+cellHeight = resolutionMeters
+`
+
+Hex grid
+`
+hexRadius = resolutionMeters / sqrt(3)
+`
+
+Geohash
+`
+precision = resolutionToGeohashPrecision(resolution)
+`
+
+---
+
+4.2 Metric Aggregation
+
+Availability
+\[
+availability = \frac{\text{samples with uptime}}{\text{total samples}}
+\]
+
+Latency P95
+Sort latencies → take 95th percentile.
+
+Throughput Median
+Median of throughput samples.
+
+Error Rate
+\[
+errorRate = \frac{\text{failed requests}}{\text{total requests}}
+\]
+
+SLA Compliance
+\[
+sla = \frac{\text{intervals meeting SLA}}{\text{total intervals}}
+\]
+
+---
+
+4.3 Confidence Score
+Weighted model:
+
+\[
+confidence = 0.4 \cdot sampleQuality + 0.3 \cdot sourceDiversity + 0.2 \cdot recency + 0.1 \cdot stability
+\]
+
+Each term ∈ [0,1].
+
+---
+
+4.4 Anomaly Detection
+Rules:
+
+- outage: availability < 0.1  
+- degraded: availability < 0.8  
+- high_latency: latencyP95 > threshold  
+- low_throughput: throughputMedian < threshold  
+- unstable: variance > threshold  
+
+---
+
+4.5 Trend Analysis
+Compare current vs historical:
+
+- Improving: +10%  
+- Degrading: −10%  
+- Stable: otherwise  
+
+---
+
+🗺️ 5. Output Contract (QoS Map)
+
+Matches your QoS Map Schema exactly.
+
+`json
+{
+  "mapId": "qmap-att-2026-05-25-001",
+  "providerId": "prov-att-001",
+  "timestamp": "2026-05-25T11:00:00Z",
+  "gridSystem": "hex",
+  "resolution": "250m",
+  "cells": [
+    {
+      "cellId": "hex-3f9a",
+      "lat": 44.8021,
+      "lon": -106.9572,
+      "metrics": {
+        "availability": 0.92,
+        "latencyP95": 48,
+        "throughputMedian": 210
+      },
+      "confidence": 0.87,
+      "anomalyFlags": ["high_latency"]
+    }
+  ]
+}
+`
+
+---
+
+🧩 6. Module Definitions
+
+GridBuilder
+- Deterministic grid generation  
+- Supports square, hex, geohash  
+- Region clipping  
+
+DataCollector
+- Telemetry ingestion  
+- Synthetic test ingestion  
+- User report ingestion  
+- Historical QoS lookup  
+
+MetricAggregator
+- Computes all metrics per cell  
+- Handles missing data  
+
+ConfidenceEngine
+- Computes confidence score  
+- Penalizes sparse or inconsistent data  
+
+AnomalyDetector
+- Rule‑based + statistical detection  
+
+TrendAnalyzer
+- Compares current vs historical  
+
+MapAssembler
+- Produces schema‑compliant QoS Map  
+
+MapVersioner
+- Semantic versioning  
+
+---
+
+🧭 Next Steps (Guided Links)
+
+- Build the QoS Telemetry Schema  
+- Build the Provider Comparison Engine  
+- Build the Provider Directory UI  
+- Build the QoS Map Viewer UI  
+
+---
+
+If you want, I can now generate:
+
+- A TypeScript implementation of the generator  
+- A Python pipeline version  
+- A DAMMS‑native agent version  
+- A manifest + pattern for the QoS Map Generator  
+
+Which direction do you want to take next, Brad — implementation, UI, or agent integration?
