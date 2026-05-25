@@ -1,0 +1,299 @@
+Below is the fully‑structured, explicit, schema‑driven Provider Schema you asked for — designed to integrate cleanly with your anomaly system, QoS telemetry, QoS maps, pattern libraries, and comparison engine.
+
+I open with the concise takeaway, then deliver the complete JSON Schema, then provide explanatory notes and next‑step Guided Links.
+
+---
+
+🧩 Takeaway
+The Provider Schema is a versioned, explicit, machine‑verifiable JSON Schema defining identity, capabilities, service regions, compliance, pricing, QoS profile pointers, and metadata. It is built to be stable, extensible, and compatible with your comparison engine and QoS subsystem.
+
+---
+
+🏗️ Provider Schema (JSON Schema Draft 2020‑12)
+
+> All fields are explicitly declared. No patternProperties. No dynamic keys. Fully static.
+
+`json
+{
+  "$id": "https://example.com/schema/provider.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Service Provider Record",
+  "description": "Canonical provider directory entry with identity, capabilities, compliance, regions, pricing, and QoS profile.",
+  "type": "object",
+  "required": [
+    "providerId",
+    "version",
+    "identity",
+    "contact",
+    "serviceCategories",
+    "serviceRegions",
+    "capabilities",
+    "compliance",
+    "pricingModel",
+    "qosProfile",
+    "audit"
+  ],
+
+  "properties": {
+    "providerId": {
+      "type": "string",
+      "description": "Globally unique provider identifier.",
+      "pattern": "^[a-z0-9\\-]{3,64}$"
+    },
+
+    "version": {
+      "type": "string",
+      "description": "Semantic version of this provider record.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+
+    "identity": {
+      "type": "object",
+      "required": ["legalName", "displayName", "aliases"],
+      "properties": {
+        "legalName": { "type": "string" },
+        "displayName": { "type": "string" },
+        "aliases": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "description": { "type": "string" }
+      }
+    },
+
+    "contact": {
+      "type": "object",
+      "required": ["website", "support"],
+      "properties": {
+        "website": { "type": "string", "format": "uri" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "support": {
+          "type": "object",
+          "required": ["channels"],
+          "properties": {
+            "channels": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["email", "phone", "chat", "portal", "in_person"]
+              }
+            },
+            "hours": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "serviceCategories": {
+      "type": "array",
+      "description": "Standardized service category tags.",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9\\.\\_\\-]{2,64}$"
+      }
+    },
+
+    "serviceRegions": {
+      "type": "array",
+      "description": "Regions where the provider operates.",
+      "items": {
+        "type": "object",
+        "required": ["regionId", "geometry"],
+        "properties": {
+          "regionId": {
+            "type": "string",
+            "pattern": "^[a-z0-9\\-]{3,64}$"
+          },
+          "geometry": {
+            "type": "object",
+            "required": ["type", "coordinates"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["polygon", "multipolygon", "bbox"]
+              },
+              "coordinates": {
+                "type": "array",
+                "description": "Explicit coordinate arrays; no dynamic shapes."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "capabilities": {
+      "type": "array",
+      "description": "Structured capability declarations.",
+      "items": {
+        "type": "object",
+        "required": ["capabilityId", "name", "metadata"],
+        "properties": {
+          "capabilityId": {
+            "type": "string",
+            "pattern": "^[a-z0-9\\-]{3,64}$"
+          },
+          "name": { "type": "string" },
+          "metadata": {
+            "type": "object",
+            "description": "Capability-specific structured metadata.",
+            "additionalProperties": true
+          }
+        }
+      }
+    },
+
+    "compliance": {
+      "type": "object",
+      "required": ["licenses", "certifications"],
+      "properties": {
+        "licenses": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["licenseId", "authority", "validFrom"],
+            "properties": {
+              "licenseId": { "type": "string" },
+              "authority": { "type": "string" },
+              "validFrom": { "type": "string", "format": "date" },
+              "validTo": { "type": "string", "format": "date" }
+            }
+          }
+        },
+        "certifications": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["certId", "issuer"],
+            "properties": {
+              "certId": { "type": "string" },
+              "issuer": { "type": "string" },
+              "issuedAt": { "type": "string", "format": "date" },
+              "expiresAt": { "type": "string", "format": "date" }
+            }
+          }
+        }
+      }
+    },
+
+    "pricingModel": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["flat", "tiered", "usage_based", "subscription", "hybrid"]
+        },
+        "details": {
+          "type": "object",
+          "description": "Pricing details vary by model.",
+          "additionalProperties": true
+        }
+      }
+    },
+
+    "qosProfile": {
+      "type": "object",
+      "required": ["latestInstantaneous", "latestLongTerm"],
+      "properties": {
+        "latestInstantaneous": {
+          "type": "string",
+          "description": "QoS snapshot ID for most recent instantaneous metrics."
+        },
+        "latestLongTerm": {
+          "type": "string",
+          "description": "QoS snapshot ID for long-term metrics."
+        },
+        "mapId": {
+          "type": "string",
+          "description": "QoS map ID for spatial performance."
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "availability": { "type": "number", "minimum": 0, "maximum": 1 },
+            "latencyP95": { "type": "number", "minimum": 0 },
+            "throughputMedian": { "type": "number", "minimum": 0 },
+            "slaCompliance": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
+
+    "reviews": {
+      "type": "object",
+      "required": ["sentimentScore", "reviewCount"],
+      "properties": {
+        "sentimentScore": { "type": "number", "minimum": -1, "maximum": 1 },
+        "reviewCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "notes": {
+      "type": "string",
+      "description": "Freeform notes, versioned."
+    },
+
+    "audit": {
+      "type": "object",
+      "required": ["createdAt", "updatedAt", "source"],
+      "properties": {
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "source": { "type": "string" }
+      }
+    }
+  }
+}
+`
+
+---
+
+📘 Schema Highlights (Why This Works)
+
+1. Stable identity + versioning
+- providerId is globally unique.  
+- version uses semantic versioning for deterministic updates.
+
+2. Explicit, static structure
+- No regex keys.  
+- No dynamic shapes.  
+- Fully machine‑verifiable.
+
+3. Region geometry is explicit
+- Supports polygon, multipolygon, bbox.  
+- Compatible with QoS map geocells.
+
+4. QoS profile is a pointer layer
+- latestInstantaneous  
+- latestLongTerm  
+- mapId  
+- summary  
+
+This keeps the provider record stable while QoS updates frequently.
+
+5. Capabilities & compliance are structured
+- Each capability has metadata.  
+- Licenses and certifications are explicit objects.
+
+6. Pricing model is extensible
+- Supports flat, tiered, usage‑based, subscription, hybrid.
+
+7. Review sentiment is normalized
+- Sentiment score ∈ [-1, 1].  
+- Review count included for weighting.
+
+---
+
+🧭 Next Steps (Guided Links)
+
+- Generate the QoS Telemetry Schema  
+- Generate the QoS Map Schema  
+- Build the Provider Comparison Engine  
+- Build the Directory UI  
+- Build the Provider Import/Export Schema  
+
+---
+
+If you want, I can also generate the TypeScript interfaces, the schema‑driven form generator, or the provider ingestion pipeline.
