@@ -1,0 +1,339 @@
+| Aspect                     | Design Choice                                      | Notes                                                                 |
+|----------------------------|----------------------------------------------------|-----------------------------------------------------------------------|
+| Comparison unit            | Provider + context (region, time window, service) | Always compare in a scoped context                                   |
+| Data sources               | Directory + QoS telemetry + reviews                | Join via providerId                                                |
+| Core abstraction           | Comparison Scenario + Comparison Metric            | Scenario defines scope; metrics define how to score                   |
+| Scoring model              | Weighted, pluggable metric functions               | Supports custom strategies per use case                               |
+| Output                     | Ranked provider list + per-metric breakdown       | Machine-readable + UI-friendly                                       |
+| Extensibility              | Schema-driven, versioned                           | New metrics, new strategies, no engine rewrite                        |
+
+---
+
+1. Core comparison concepts
+
+1.1 Comparison scenario
+
+This is the input contract for the engine.
+
+`json
+{
+  "scenarioId": "cmp-2025-telecom-wy-001",
+  "version": "1.0.0",
+  "createdAt": "2026-05-25T00:45:00",
+  "context": {
+    "serviceCategory": "telecom.mobile",
+    "subCategory": "5g",
+    "region": {
+      "type": "polygon",
+      "coordinates": [
+        [-106.98, 44.80],
+        [-106.98, 44.90],
+        [-106.85, 44.90],
+        [-106.85, 44.80],
+        [-106.98, 44.80]
+      ]
+    },
+    "timeWindow": {
+      "mode": "long_term",
+      "interval": "30d",
+      "end": "2026-05-24T23:59:59"
+    },
+    "consumerProfile": {
+      "usagePattern": "heavy_data",
+      "priority": ["throughput", "latency", "availability"]
+    }
+  },
+  "filters": {
+    "includeProviders": [],
+    "excludeProviders": [],
+    "minSlaCompliance": 0.97,
+    "minCoverageScore": 0.8
+  },
+  "metricStrategyId": "telecom5gheavydatav1",
+  "outputOptions": {
+    "maxProviders": 20,
+    "includeMetricBreakdown": true,
+    "includeQoSMaps": false
+  }
+}
+`
+
+Key idea: comparison is always scoped—no global “best provider”, only “best for this scenario”.
+
+---
+
+2. Metric strategy model
+
+2.1 Metric definition
+
+`json
+{
+  "metricStrategyId": "telecom5gheavydatav1",
+  "version": "1.0.0",
+  "applicableTo": {
+    "serviceCategory": "telecom.mobile",
+    "subCategory": "5g"
+  },
+  "metrics": [
+    {
+      "metricId": "coverage_score",
+      "source": "qos_map",
+      "description": "Fraction of region area with availability >= 0.99",
+      "weight": 0.35,
+      "direction": "higherisbetter",
+      "normalization": {
+        "type": "min_max",
+        "min": 0.0,
+        "max": 1.0
+      }
+    },
+    {
+      "metricId": "avg_throughput",
+      "source": "qos_telemetry",
+      "description": "Median downlink throughput across region",
+      "weight": 0.30,
+      "direction": "higherisbetter",
+      "normalization": {
+        "type": "log_scale",
+        "base": 10,
+        "min": 1,
+        "max": 1000
+      }
+    },
+    {
+      "metricId": "latency_p95",
+      "source": "qos_telemetry",
+      "description": "95th percentile latency",
+      "weight": 0.20,
+      "direction": "lowerisbetter",
+      "normalization": {
+        "type": "min_max",
+        "min": 10,
+        "max": 200
+      }
+    },
+    {
+      "metricId": "sla_compliance",
+      "source": "qos_telemetry",
+      "description": "SLA compliance over time window",
+      "weight": 0.10,
+      "direction": "higherisbetter",
+      "normalization": {
+        "type": "min_max",
+        "min": 0.9,
+        "max": 1.0
+      }
+    },
+    {
+      "metricId": "customer_sentiment",
+      "source": "reviews",
+      "description": "Normalized sentiment score",
+      "weight": 0.05,
+      "direction": "higherisbetter",
+      "normalization": {
+        "type": "z_score",
+        "mean": 0,
+        "stdDev": 1.0
+      }
+    }
+  ],
+  "aggregation": {
+    "type": "weighted_sum",
+    "normalizeWeights": true
+  },
+  "constraints": {
+    "hard": [
+      {
+        "metricId": "coverage_score",
+        "operator": ">=",
+        "value": 0.7
+      }
+    ],
+    "soft": []
+  }
+}
+`
+
+Design choices:
+
+- Metric source: directory, qostelemetry, qosmap, reviews, etc.  
+- Direction: needed to invert “lower is better” metrics.  
+- Normalization: pluggable—min–max, log, z-score, custom.  
+- Aggregation: default weighted sum, but you can support Pareto, TOPSIS, etc. later.
+
+---
+
+3. Engine pipeline
+
+3.1 High-level steps
+
+1. Resolve scenario  
+   - Validate scenario schema.  
+   - Resolve metricStrategyId → metric strategy.  
+   - Resolve region + time window.
+
+2. Select candidate providers  
+   - Query provider directory by serviceCategory, serviceRegions intersecting region.  
+   - Apply filters (include/exclude, min SLA, etc.).
+
+3. Fetch data for each provider  
+   - Directory metadata (for display).  
+   - QoS telemetry for time window.  
+   - QoS map cells intersecting region.  
+   - Reviews / sentiment.
+
+4. Compute raw metrics  
+   For each metric in strategy, run a metric function:
+
+   `ts
+   interface MetricFunctionInput {
+     providerId: string;
+     scenario: Scenario;
+     provider: ProviderRecord;
+     qosTelemetry: QoSTelemetry[];
+     qosMap: QoSMap | null;
+     reviews: ReviewSummary | null;
+   }
+
+   interface MetricFunctionOutput {
+     metricId: string;
+     rawValue: number | null;
+     confidence: number; // 0–1
+     notes?: string;
+   }
+   `
+
+5. Normalize metrics  
+   - Apply per-metric normalization.  
+   - Handle missing data (impute, penalize, or mark as low confidence).
+
+6. Apply constraints  
+   - Drop providers failing hard constraints.  
+   - Optionally flag soft constraint violations.
+
+7. Aggregate scores  
+   - Compute overall score per provider.  
+   - Keep per-metric normalized scores for explanation.
+
+8. Rank and package output.
+
+---
+
+4. Output schema
+
+4.1 Comparison result
+
+`json
+{
+  "comparisonId": "cmp-2025-telecom-wy-001-run-01",
+  "scenario": { "...": "scenario object echoed" },
+  "metricStrategy": {
+    "metricStrategyId": "telecom5gheavydatav1",
+    "version": "1.0.0"
+  },
+  "generatedAt": "2026-05-25T00:46:00",
+  "providers": [
+    {
+      "providerId": "prov-att-001",
+      "rank": 1,
+      "overallScore": 0.91,
+      "overallConfidence": 0.88,
+      "metrics": [
+        {
+          "metricId": "coverage_score",
+          "rawValue": 0.93,
+          "normalizedValue": 0.93,
+          "weight": 0.35,
+          "contribution": 0.3255,
+          "confidence": 0.9
+        },
+        {
+          "metricId": "avg_throughput",
+          "rawValue": 220,
+          "normalizedValue": 0.78,
+          "weight": 0.30,
+          "contribution": 0.234,
+          "confidence": 0.85
+        }
+      ],
+      "flags": [],
+      "explanations": [
+        "High coverage across requested region",
+        "Strong throughput but slightly higher latency than top competitor"
+      ]
+    }
+  ],
+  "summary": {
+    "providerCount": 5,
+    "filteredOutByConstraints": 2,
+    "metricCoverage": {
+      "coverage_score": 1.0,
+      "avg_throughput": 0.9,
+      "latency_p95": 0.9,
+      "sla_compliance": 1.0,
+      "customer_sentiment": 0.8
+    }
+  }
+}
+`
+
+---
+
+5. Engine architecture (modular)
+
+5.1 Logical modules
+
+- Scenario Resolver  
+  - Validates scenario JSON.  
+  - Maps to metric strategy.  
+  - Normalizes region/time window.
+
+- Provider Selector  
+  - Queries directory.  
+  - Applies filters and region intersection.
+
+- Data Fetcher  
+  - Abstracts data sources: DirectoryStore, QoSTelemetryStore, QoSMapStore, ReviewStore.  
+  - Caches per comparison run.
+
+- Metric Engine  
+  - Registry of metric functions keyed by metricId.  
+  - Executes metric functions in parallel per provider.  
+  - Handles missing data and confidence scores.
+
+- Scoring Engine  
+  - Normalization + aggregation.  
+  - Applies constraints.  
+  - Produces ranked list.
+
+- Explanation Engine  
+  - Generates human-readable explanations from metric deltas and weights.  
+  - E.g., “Provider A is better than B mainly due to higher coverage and lower latency.”
+
+- API Layer  
+  - POST /compare/providers → comparison result.  
+  - Optional: GET /metric-strategies, GET /scenarios/{id}.
+
+---
+
+6. Hooks for your anomaly & pattern ecosystem
+
+Given your broader system:
+
+- Anomaly integration:  
+  - Metric functions can consume anomaly flags (e.g., recent outages) and penalize scores or lower confidence.  
+  - You can expose “recent instability” as a metric.
+
+- Pattern library:  
+  - Metric strategies themselves are patterns—versioned, reusable, and domain-specific.  
+  - You can store them in the same pattern library as playbooks.
+
+- Energy / signature modeling:  
+  - For energy or load-based services, metrics can be derived from signature similarity, variance, or deviation from expected patterns.
+
+---
+
+If you’d like, next step I can:  
+- Generate a TypeScript interface set for all these schemas, or  
+- Design the REST API surface for the comparison engine, or  
+- Draft example metric functions for 2–3 concrete domains (telecom, HVAC, cloud compute).
