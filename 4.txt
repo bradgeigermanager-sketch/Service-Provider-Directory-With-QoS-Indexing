@@ -1,0 +1,280 @@
+Below is the complete, explicit, machine‑verifiable QoS Schema you asked for — fully aligned with the provider directory and comparison engine you already have.  
+It is structured into QoS Telemetry Snapshots, QoS Metrics, QoS GeoCells, and QoS Maps, all versioned and stable.
+
+This is the canonical schema your entire ecosystem will use.
+
+---
+
+🧩 Takeaway
+The QoS Schema is split into two coordinated artifacts:
+
+1. QoS Telemetry Snapshot Schema — time‑windowed performance metrics  
+2. QoS Map Schema — spatial grid of performance metrics  
+
+Both reference the same metric definitions and are designed for instantaneous and long‑term QoS.
+
+---
+
+📡 QoS Telemetry Schema (JSON Schema Draft 2020‑12)
+
+`json
+{
+  "$id": "https://example.com/schema/qos-telemetry.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QoS Telemetry Snapshot",
+  "description": "Time-windowed performance metrics for a provider.",
+  "type": "object",
+
+  "required": [
+    "qosId",
+    "providerId",
+    "timestamp",
+    "interval",
+    "metrics",
+    "confidence",
+    "anomalies",
+    "source"
+  ],
+
+  "properties": {
+    "qosId": {
+      "type": "string",
+      "pattern": "^[a-z0-9\\-]{3,64}$",
+      "description": "Unique QoS snapshot identifier."
+    },
+
+    "providerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9\\-]{3,64}$"
+    },
+
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this QoS snapshot was generated."
+    },
+
+    "interval": {
+      "type": "string",
+      "enum": ["instantaneous", "1h", "24h", "7d", "30d", "90d"],
+      "description": "Time window represented by this snapshot."
+    },
+
+    "metrics": {
+      "type": "object",
+      "required": [
+        "availability",
+        "latencyP95",
+        "latencyP50",
+        "throughputMedian",
+        "throughputP95",
+        "errorRate",
+        "slaCompliance"
+      ],
+      "properties": {
+        "availability": { "type": "number", "minimum": 0, "maximum": 1 },
+        "latencyP95": { "type": "number", "minimum": 0 },
+        "latencyP50": { "type": "number", "minimum": 0 },
+        "throughputMedian": { "type": "number", "minimum": 0 },
+        "throughputP95": { "type": "number", "minimum": 0 },
+        "errorRate": { "type": "number", "minimum": 0, "maximum": 1 },
+        "slaCompliance": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Statistical confidence in the metrics."
+    },
+
+    "anomalies": {
+      "type": "array",
+      "description": "Detected anomalies affecting QoS.",
+      "items": {
+        "type": "object",
+        "required": ["type", "severity"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "outage",
+              "degradation",
+              "instability",
+              "packet_loss",
+              "latency_spike",
+              "throughput_drop"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["low", "medium", "high", "critical"]
+          },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+
+    "trend": {
+      "type": "string",
+      "enum": ["improving", "degrading", "stable"],
+      "description": "Optional trend indicator."
+    },
+
+    "source": {
+      "type": "object",
+      "required": ["telemetry", "syntheticTests", "userReports"],
+      "properties": {
+        "telemetry": { "type": "boolean" },
+        "syntheticTests": { "type": "boolean" },
+        "userReports": { "type": "boolean" }
+      }
+    }
+  }
+}
+`
+
+---
+
+🗺️ QoS Map Schema (Spatial Performance Grid)
+
+`json
+{
+  "$id": "https://example.com/schema/qos-map.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QoS Spatial Map",
+  "description": "Spatial grid of performance metrics for a provider.",
+  "type": "object",
+
+  "required": [
+    "mapId",
+    "providerId",
+    "timestamp",
+    "gridSystem",
+    "resolution",
+    "cells"
+  ],
+
+  "properties": {
+    "mapId": {
+      "type": "string",
+      "pattern": "^[a-z0-9\\-]{3,64}$"
+    },
+
+    "providerId": {
+      "type": "string",
+      "pattern": "^[a-z0-9\\-]{3,64}$"
+    },
+
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+
+    "gridSystem": {
+      "type": "string",
+      "enum": ["square", "hex", "geohash"]
+    },
+
+    "resolution": {
+      "type": "string",
+      "enum": ["50m", "250m", "1km", "5km"]
+    },
+
+    "cells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "cellId",
+          "lat",
+          "lon",
+          "metrics",
+          "confidence",
+          "anomalyFlags"
+        ],
+        "properties": {
+          "cellId": {
+            "type": "string",
+            "pattern": "^[a-z0-9\\-]{3,64}$"
+          },
+          "lat": { "type": "number", "minimum": -90, "maximum": 90 },
+          "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+
+          "metrics": {
+            "type": "object",
+            "required": [
+              "availability",
+              "latencyP95",
+              "throughputMedian"
+            ],
+            "properties": {
+              "availability": { "type": "number", "minimum": 0, "maximum": 1 },
+              "latencyP95": { "type": "number", "minimum": 0 },
+              "throughputMedian": { "type": "number", "minimum": 0 }
+            }
+          },
+
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+
+          "anomalyFlags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "outage",
+                "degraded",
+                "unstable",
+                "high_latency",
+                "low_throughput"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+`
+
+---
+
+🧠 Why This Schema Works
+
+1. Two-layer QoS model
+- Telemetry = time‑windowed  
+- Map = spatial grid  
+- Both reference the same metric vocabulary
+
+2. Instantaneous + long‑term
+- interval supports both  
+- Provider schema links to both via qosProfile
+
+3. Comparison‑engine ready
+- Metrics are explicit  
+- Confidence scores included  
+- Anomalies included  
+- Trend included
+
+4. Spatial grid is deterministic
+- Supports square, hex, geohash  
+- Explicit resolution levels  
+- Each cell has metrics + confidence + anomaly flags
+
+---
+
+🧭 Next Steps (Guided Links)
+
+- Generate the QoS Map Generator  
+- Generate the Provider Comparison Engine  
+- Generate the Provider Import/Export Schema  
+- Generate the Directory UI  
+
+---
+
+If you want, I can also generate the TypeScript interfaces, the schema‑driven form generator, or the QoS ingestion pipeline.
